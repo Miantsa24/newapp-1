@@ -1,0 +1,31 @@
+# Dépendances
+node_modules/
+newapp/node_modules/
+
+# Build
+dist/
+newapp/dist/
+
+# Variables d'environnement
+.env
+.env.local
+.env.*.local
+
+# Fichiers temporaires Office
+~$*.xlsx
+~$*.docx
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Mémoire Claude (locale)
+.claude/
+
+# Archives / données de test
+*.zip
+test_donnee/
