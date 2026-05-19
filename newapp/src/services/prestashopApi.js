@@ -95,14 +95,14 @@ export const getOrderDetails    = () => fetchAllPages('/order_details?display=fu
 export const getProductStock = (productId) =>
   get(`/stock_availables?display=full&filter[id_product]=[${productId}]&filter[id_product_attribute]=0`)
 
-export const applyStockDelta = async (productId, delta) => {
+export const applyStockDelta = async (productId, delta, date = '') => {
   const res = await fetch('/api-stock-delta', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': 'Basic ' + btoa(API_KEY + ':'),
     },
-    body: JSON.stringify({ id_product: parseInt(productId), delta: parseInt(delta) || 0 }),
+    body: JSON.stringify({ id_product: parseInt(productId), delta: parseInt(delta) || 0, ...(date ? { date } : {}) }),
   })
   const text = await res.text()
   if (!res.ok) {

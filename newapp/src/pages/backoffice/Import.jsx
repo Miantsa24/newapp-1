@@ -523,7 +523,10 @@ export default function BackofficeImport() {
             if (id) {
               productIds[row.reference] = id
               if (stockQty > 0) {
-                await applyStockDelta(id, stockQty)
+                const rawDate = row.date_availability_produit || ''
+                const dm = rawDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+                const fmtDate = dm ? `${dm[3]}-${dm[2]}-${dm[1]} 00:00:00` : ''
+                await applyStockDelta(id, stockQty, fmtDate)
               }
             }
             res.products++
