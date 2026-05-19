@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"function init\\\\|kernel\\\\|AppKernel\\\\|maintenance\\\\|PS_SHOP_ENABLE\" \"c:/xampp/htdocs/Prestashop/classes/FrontController.php\" | head -20)",
+      "Read(//c/xampp/htdocs/Prestashop/classes/**)",
+      "Bash(grep -rn 'global $kernel\\\\|$kernel\\\\s*=\\\\s*new\\\\|$kernel->boot' c:/xampp/htdocs/Prestashop/classes/controller/Controller.php)"
+    ]
+  }
+}
