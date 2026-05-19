@@ -7,7 +7,7 @@ import {
   createOrderFromData,
   uploadProductImage,
   getCustomerByEmail,
-  upsertStockAvailable,
+  applyStockDelta,
   getFirstId,
   createAttributeGroup,
   createAttributeValue,
@@ -493,6 +493,10 @@ export default function BackofficeImport() {
         }
       }
 
+      try {
+        localStorage.setItem('newapp_initial_stock_by_ref', JSON.stringify(stockByRef))
+      } catch { }
+
       for (const file of allCsvFiles.filter(f => f.module === 'products')) {
         allProducts.push(...file.rows)
         setProgress({ label: 'Produits', current: 0, total: file.rows.length })
@@ -500,10 +504,14 @@ export default function BackofficeImport() {
           const row = file.rows[i]
           const categoryId = catIds[row.categorie] || catIds[row.category] || '2'
           const stockQty = stockByRef[row.reference] ?? 0
+          // Convertir TTC → HT : PS stocke le prix HT dans product.price
+          const taxRate = parseNumber(row.taxe) / 100  // "11,65%" → 0.1165
+          const priceTTC = parseNumber(row.prix_ttc || row['Price tax excluded'] || row.price)
+          const priceHT = taxRate > 0 ? +(priceTTC / (1 + taxRate)).toFixed(6) : priceTTC
           try {
             const xml = await importProducts({
               name: row.nom || row.name,
-              price: parseNumber(row.prix_ttc || row['Price tax excluded'] || row.price),
+              price: priceHT,
               reference: row.reference,
               wholesale_price: parseNumber(row.prix_achat || row['Wholesale price']),
               active: '1',
@@ -514,7 +522,9 @@ export default function BackofficeImport() {
             const id = doc.querySelector('product id')?.textContent?.trim()
             if (id) {
               productIds[row.reference] = id
-              await upsertStockAvailable(id, stockQty)
+              if (stockQty > 0) {
+                await applyStockDelta(id, stockQty)
+              }
             }
             res.products++
           } catch (e) { res.errors.push(`Produit "${row.reference}": ${e.message}`) }
@@ -576,9 +586,11 @@ export default function BackofficeImport() {
           const [ref, variants] = allCombinations[i]
           const productId = productIds[ref]
           if (!productId) { res.errors.push(`Combinaison "${ref}": produit introuvable`); setProgress(p => ({ ...p, current: i + 1 })); continue }
-          // Prix de base du produit (depuis fichier1) pour calculer l'impact de prix
+          // Prix de base du produit (depuis fichier1) — converti en HT pour les impacts
           const baseProductRow = allProducts.find(p => p.reference === ref)
-          const basePrice = parseNumber(baseProductRow?.prix_ttc || baseProductRow?.price || 0)
+          const baseTaxRate = parseNumber(baseProductRow?.taxe || 0) / 100
+          const basePriceTTC = parseNumber(baseProductRow?.prix_ttc || baseProductRow?.price || 0)
+          const basePriceHT = baseTaxRate > 0 ? basePriceTTC / (1 + baseTaxRate) : basePriceTTC
           for (const variant of variants) {
             const stock = parseInt(variant.stock_initial || 0)
             if (!variant.karazany) {
@@ -588,9 +600,10 @@ export default function BackofficeImport() {
             const key = `${variant.specificite}_${variant.karazany}`
             const attrValueId = valueIds[key]
             if (!attrValueId) { res.errors.push(`Combinaison "${ref}/${variant.karazany}": valeur attribut introuvable`); continue }
-            // Impact de prix = prix de la variante - prix de base du produit
-            const variantPrice = parseNumber(variant.prix_vente_ttc || 0)
-            const priceImpact = variantPrice > 0 ? +(variantPrice - basePrice).toFixed(6) : 0
+            // Impact de prix en HT = prix variante HT - prix base HT
+            const variantPriceTTC = parseNumber(variant.prix_vente_ttc || 0)
+            const variantPriceHT = baseTaxRate > 0 ? variantPriceTTC / (1 + baseTaxRate) : variantPriceTTC
+            const priceImpact = variantPriceTTC > 0 ? +(variantPriceHT - basePriceHT).toFixed(6) : 0
             try {
               const combId = await createCombination(productId, [attrValueId], priceImpact, `${ref}_${variant.karazany}`)
               if (combId) {
@@ -703,10 +716,16 @@ export default function BackofficeImport() {
                   items: psItems,
                   order_state_label: stateName,
                   address: row.adresse || 'Adresse',
+                  order_date: row.date || '',
                 }),
               })
-              const data = await r.json()
-              if (!r.ok || !data.success) throw new Error(data.error || `HTTP ${r.status}`)
+              const text = await r.text()
+              let data = null
+              try { data = JSON.parse(text) } catch { data = null }
+              if (!r.ok || !data?.success) {
+                const fallback = text ? text.slice(0, 300) : `HTTP ${r.status}`
+                throw new Error(data?.error || fallback)
+              }
               res.orders++
             } catch (e) { res.errors.push(`Commande "${row.email}": ${e.message}`) }
           } else {

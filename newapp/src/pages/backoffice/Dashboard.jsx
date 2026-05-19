@@ -17,7 +17,7 @@ export default function BackofficeDashboard() {
   const [orders,    setOrders]    = useState([])
   const [catStats,  setCatStats]  = useState([])  // [{name, ventes, achats}]
   const [catStock,  setCatStock]  = useState([])  // [{name, physique, reservé, disponible}]
-  const [totals,    setTotals]    = useState({ ventesHT: 0, achatsHT: 0 })
+  const [totals,    setTotals]    = useState({ ventesHT: 0, achatsHT: 0, valeurStock: 0 })
   const [loading,   setLoading]   = useState(true)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
 
@@ -43,11 +43,19 @@ export default function BackofficeDashboard() {
       orderList.forEach(o => { orderStateMap[o.id] = o.current_state })
 
       // ── Products ──
-      const prodCatMap = {}  // id → id_category_default
+      const prodCatMap = {}       // id → id_category_default
+      const wholesaleByProd = {}  // id → wholesale_price (prix_achat)
+      const referenceByProd = {}  // id → reference
       Array.from(prodDoc.querySelectorAll('products > product')).forEach(p => {
         const id  = p.querySelector('id')?.textContent?.trim()
         const cat = p.querySelector('id_category_default')?.textContent?.trim()
-        if (id) prodCatMap[id] = cat
+        const wp  = parseFloat(p.querySelector('wholesale_price')?.textContent?.trim() || 0)
+        const ref = p.querySelector('reference')?.textContent?.trim()
+        if (id) {
+          prodCatMap[id] = cat
+          wholesaleByProd[id] = wp
+          referenceByProd[id] = ref
+        }
       })
 
       // ── Categories (exclure racine 1 et home 2) ──
@@ -68,19 +76,69 @@ export default function BackofficeDashboard() {
         original_wholesale_price: parseFloat(d.querySelector('original_wholesale_price')?.textContent?.trim() || 0),
       }))
 
-      // ── Stock disponible par produit ──
-      const stockByProduct = {}
-      Array.from(stockDoc.querySelectorAll('stock_availables > stock_available')).forEach(s => {
-        const pid = s.querySelector('id_product')?.textContent?.trim()
-        const qty = parseInt(s.querySelector('quantity')?.textContent?.trim() || 0)
-        if (pid) stockByProduct[pid] = (stockByProduct[pid] || 0) + Math.max(0, qty)
+      // ── Quantites livrees par produit (etat 5) ──
+      const deliveredByProduct = {}
+      details.forEach(d => {
+        const state = orderStateMap[d.id_order]
+        if (state === '5') {
+          deliveredByProduct[d.product_id] = (deliveredByProduct[d.product_id] || 0) + d.product_quantity
+        }
       })
 
-      // ── Stock réservé par produit (commandes état 1 ou 2, pas encore livrées) ──
+      // ── Stock par produit (stock initial - livraisons si disponible) ──
+      let initialStockByRef = null
+      try {
+        initialStockByRef = JSON.parse(localStorage.getItem('newapp_initial_stock_by_ref') || 'null')
+      } catch { }
+
+      const stockByProduct = {}
+      const productIdByRef = {}
+      Object.keys(referenceByProd).forEach(pid => {
+        const ref = referenceByProd[pid]
+        if (ref) productIdByRef[ref] = pid
+      })
+      if (initialStockByRef && typeof initialStockByRef === 'object') {
+        Object.keys(referenceByProd).forEach(pid => {
+          const ref = referenceByProd[pid]
+          if (ref && initialStockByRef[ref] !== undefined) {
+            const initialQty = Math.max(0, parseInt(initialStockByRef[ref] || 0))
+            const deliveredQty = deliveredByProduct[pid] || 0
+            stockByProduct[pid] = Math.max(0, initialQty - deliveredQty)
+          }
+        })
+      }
+
+      if (!initialStockByRef) {
+        Array.from(stockDoc.querySelectorAll('stock_availables > stock_available')).forEach(s => {
+          const pid = s.querySelector('id_product')?.textContent?.trim()
+          const attrId = s.querySelector('id_product_attribute')?.textContent?.trim() || '0'
+          const shopId = s.querySelector('id_shop')?.textContent?.trim() || '1'
+          if (!pid || attrId !== '0' || shopId !== '1') return
+          const qty = parseInt(s.querySelector('quantity')?.textContent?.trim() || 0)
+          stockByProduct[pid] = (stockByProduct[pid] || 0) + Math.max(0, qty)
+        })
+      }
+
+      // ── Valeur du stock = prix_achat × quantité en stock pour chaque produit ──
+      let valeurStock = 0
+      if (initialStockByRef && typeof initialStockByRef === 'object') {
+        Object.entries(initialStockByRef).forEach(([ref, qty]) => {
+          const pid = productIdByRef[ref]
+          if (!pid) return
+          const unitCost = wholesaleByProd[pid] || 0
+          valeurStock += unitCost * Math.max(0, parseInt(qty || 0))
+        })
+      } else {
+        valeurStock = Object.entries(stockByProduct).reduce((sum, [pid, qty]) => {
+          return sum + (wholesaleByProd[pid] || 0) * qty
+        }, 0)
+      }
+
+      // ── Stock réservé par produit (commandes état 2 = paiement accepté) ──
       const reservedByProduct = {}
       details.forEach(d => {
         const state = orderStateMap[d.id_order]
-        if (state === '1' || state === '2') {
+        if (state === '2') {
           reservedByProduct[d.product_id] = (reservedByProduct[d.product_id] || 0) + d.product_quantity
         }
       })
@@ -104,15 +162,17 @@ export default function BackofficeDashboard() {
         .map(([name, s]) => ({ name, ventes: s.ventes, achats: s.achats, benefice: s.ventes - s.achats }))
         .sort((a, b) => b.benefice - a.benefice)
       setCatStats(catStatsArr)
-      setTotals({ ventesHT: totalVentesHT, achatsHT: totalAchatsHT })
+      setTotals({ ventesHT: totalVentesHT, achatsHT: totalAchatsHT, valeurStock })
 
       // ── Stock par catégorie ──
       const stockCatMap = {}
       Object.entries(prodCatMap).forEach(([pid, catId]) => {
         const catName = getCatName(catId)
         if (!stockCatMap[catName]) stockCatMap[catName] = { disponible: 0, reservé: 0 }
-        stockCatMap[catName].disponible += stockByProduct[pid] || 0
-        stockCatMap[catName].reservé    += reservedByProduct[pid] || 0
+        const physical = stockByProduct[pid] || 0
+        const reserved = reservedByProduct[pid] || 0
+        stockCatMap[catName].disponible += Math.max(0, physical - reserved)
+        stockCatMap[catName].reservé    += reserved
       })
       const catStockArr = Object.entries(stockCatMap)
         .map(([name, s]) => ({ name, disponible: s.disponible, reservé: s.reservé, physique: s.disponible + s.reservé }))
@@ -230,9 +290,10 @@ export default function BackofficeDashboard() {
         {/* Totaux globaux */}
         <div className="grid grid-cols-3 gap-4 mb-6">
           {[
-            { label: 'Total ventes HT',  value: `${fmt(totals.ventesHT)} €`,                         color: 'text-emerald-400' },
-            { label: "Total achats HT",  value: `${fmt(totals.achatsHT)} €`,                         color: 'text-orange-400'  },
-            { label: 'Bénéfice total HT',value: `${fmt(totals.ventesHT - totals.achatsHT)} €`,       color: 'text-sky-400'     },
+            { label: 'Total ventes HT',        value: `${fmt(totals.ventesHT)} €`,    color: 'text-emerald-400' },
+            { label: 'Coût des ventes HT',     value: `${fmt(totals.achatsHT)} €`,    color: 'text-orange-400'  },
+            { label: 'Valeur du stock HT',      value: `${fmt(totals.valeurStock)} €`, color: 'text-violet-400'  },
+            // { label: 'Bénéfice total HT', value: `${fmt(totals.ventesHT - totals.achatsHT)} €`, color: 'text-sky-400' },
           ].map(s => (
             <div key={s.label} className="bg-slate-900 rounded-xl p-4 text-center">
               <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>

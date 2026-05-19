@@ -112,7 +112,11 @@ export default function BackofficeCommandes() {
     setUpdating(null)
   }
 
-  const filtered = orders.filter(o => {
+  // Pour ré-afficher les commandes "Dans le panier", commenter la ligne suivante
+  const visibleOrders = orders.filter(o => o.current_state !== '1')
+  // const visibleOrders = orders  // ← décommenter pour afficher toutes les commandes y compris le panier
+
+  const filtered = visibleOrders.filter(o => {
     const cust = customers[o.id_customer]
     const matchSearch =
       o.reference?.toLowerCase().includes(search.toLowerCase()) ||
@@ -123,7 +127,7 @@ export default function BackofficeCommandes() {
   })
 
   // States that actually appear in order list (for filter buttons)
-  const activeStateIds = [...new Set(orders.map(o => o.current_state))].filter(Boolean)
+  const activeStateIds = [...new Set(visibleOrders.map(o => o.current_state))].filter(Boolean)
 
   if (loading) return <p className="text-slate-400 mt-8 text-center">Chargement des commandes...</p>
   if (error)   return <p className="text-red-400 mt-8 text-center">Erreur : {error}</p>
@@ -144,7 +148,7 @@ export default function BackofficeCommandes() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-white">
           Commandes
-          <span className="ml-2 text-sm font-normal text-slate-400">({orders.length})</span>
+          <span className="ml-2 text-sm font-normal text-slate-400">({visibleOrders.length})</span>
         </h1>
         <input
           type="text"
@@ -163,7 +167,7 @@ export default function BackofficeCommandes() {
             filterState === 'all' ? 'bg-sky-500 text-white' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-white'
           }`}
         >
-          Tous ({orders.length})
+          Tous ({visibleOrders.length})
         </button>
         {activeStateIds.map(id => {
           const count = orders.filter(o => o.current_state === id).length

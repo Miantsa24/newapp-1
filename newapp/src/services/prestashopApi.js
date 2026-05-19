@@ -95,6 +95,24 @@ export const getOrderDetails    = () => fetchAllPages('/order_details?display=fu
 export const getProductStock = (productId) =>
   get(`/stock_availables?display=full&filter[id_product]=[${productId}]&filter[id_product_attribute]=0`)
 
+export const applyStockDelta = async (productId, delta) => {
+  const res = await fetch('/api-stock-delta', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Basic ' + btoa(API_KEY + ':'),
+    },
+    body: JSON.stringify({ id_product: parseInt(productId), delta: parseInt(delta) || 0 }),
+  })
+  const text = await res.text()
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try { msg = JSON.parse(text).error || msg } catch { msg += ' — ' + text.slice(0, 200) }
+    throw new Error(msg)
+  }
+  try { return JSON.parse(text) } catch { return { success: true } }
+}
+
 export const fetchProductCombinations = async (productId) => {
   const combDoc = await get(`/combinations?display=full&filter[id_product]=[${productId}]`)
   const combNodes = Array.from(combDoc.querySelectorAll('combinations > combination'))
@@ -585,7 +603,7 @@ export const changeOrderStatePS = async (orderId, stateLabel) => {
 
 export { get, del }
 
-const callOrderPhp = async (customerId, cartItems, address, customerEmail = '') => {
+const callOrderPhp = async (customerId, cartItems, address, customerEmail = '', orderDate = '') => {
   const items = cartItems.map(item => ({
     product_id: parseInt(item.id),
     quantity: item.quantity,
@@ -604,6 +622,7 @@ const callOrderPhp = async (customerId, cartItems, address, customerEmail = '') 
       items,
       order_state_label: 'Dans le panier',
       address: address || 'Adresse',
+      order_date: orderDate || '',
     }),
   })
   if (!res.ok) {
@@ -613,7 +632,7 @@ const callOrderPhp = async (customerId, cartItems, address, customerEmail = '') 
   return res.json()
 }
 
-export const createOrder = async (form, cart) => {
+export const createOrder = async (form, cart, orderDate = '') => {
   // Créer le client anonyme puis déléguer à order.php
   const customerXml = `<?xml version="1.0" encoding="UTF-8"?>
 <prestashop xmlns:xlink="http://www.w3.org/1999/xlink">
@@ -633,11 +652,11 @@ export const createOrder = async (form, cart) => {
   if (!customerId) throw new Error('Impossible de créer le client')
 
   const address = `${form.address}, ${form.city} ${form.postcode}`
-  return callOrderPhp(customerId, cart, address)
+  return callOrderPhp(customerId, cart, address, '', orderDate)
 }
 
 export const createOrderFromData = async (customer, cartItems, orderState, secureKey, ids = {}) => {
-  return callOrderPhp(customer.customerId, cartItems, customer.address, customer.email || '')
+  return callOrderPhp(customer.customerId, cartItems, customer.address, customer.email || '', customer.orderDate || '')
 }
 
 export const uploadProductImage = async (productId, imageFile, imageBlob) => {
